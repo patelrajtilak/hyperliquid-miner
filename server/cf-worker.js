@@ -1,12 +1,12 @@
 /**
  * HYPE MINER — Cloudflare Worker entry
- * Express + node:http + Cloudflare HTTP server adapter
+ * Express + node:http + Cloudflare HTTP adapter
  *
- * Keeps:
+ * Includes:
  * - HYPE_DB KV persistence
  * - Express API routes
- * - Static frontend via ASSETS
- * - /api/health diagnostics
+ * - Static frontend through ASSETS
+ * - Health diagnostics
  * - Scheduled mining notifications
  */
 
@@ -18,14 +18,18 @@ let server = null;
 let booted = false;
 let bootPromise = null;
 let bootError = null;
-let nodeHandler = null;
 let handlerError = null;
+let nodeHandler = null;
 
 function unwrapModule(mod, exportName) {
-  if (mod && typeof mod[exportName] === 'function') return mod;
+  if (mod && typeof mod[exportName] === 'function') {
+    return mod;
+  }
+
   if (mod?.default && typeof mod.default[exportName] === 'function') {
     return mod.default;
   }
+
   return mod?.default || mod;
 }
 
@@ -52,7 +56,7 @@ async function ensureBoot(env) {
           : undefined;
 
       try {
-        // Workaround for iconv-lite's Node-version detection on Workers.
+        // Workaround for iconv-lite Node version detection.
         if (process.versions && savedNodeVer !== undefined) {
           try {
             Object.defineProperty(process.versions, 'node', {
@@ -62,8 +66,16 @@ async function ensureBoot(env) {
           } catch (_) {}
         }
 
-        const db = unwrapModule(require('./db'), 'setKvBinding');
-        const appModule = unwrapModule(require('./app'), 'createApp');
+        const db = unwrapModule(
+          require('./db'),
+          'setKvBinding'
+        );
+
+        const appModule = unwrapModule(
+          require('./app'),
+          'createApp'
+        );
+
         const createApp = appModule.createApp;
 
         if (typeof db.setKvBinding !== 'function') {
@@ -80,7 +92,7 @@ async function ensureBoot(env) {
           );
         }
 
-        // Connect Cloudflare KV before loading application data.
+        // Connect KV before loading database state.
         if (env?.HYPE_DB) {
           db.setKvBinding(env.HYPE_DB);
 
@@ -99,17 +111,23 @@ async function ensureBoot(env) {
 
         app = createApp();
 
-        // Express must be attached to a Node HTTP server.
+        // Create and start the Node HTTP server.
         server = createServer(app);
 
-        // Cloudflare's adapter uses the server's request listener.
-        nodeHandler = httpServerHandler({ port: 3000 });
+        server.listen(3000);
+
+        // Cloudflare adapter uses the same port.
+        nodeHandler = httpServerHandler({
+          port: 3000
+        });
 
         booted = true;
         bootError = null;
         handlerError = null;
 
-        console.log('[cf-worker] Express app and HTTP adapter initialized');
+        console.log(
+          '[cf-worker] Express app and HTTP adapter initialized'
+        );
       } finally {
         if (process.versions && savedNodeVer !== undefined) {
           try {
@@ -160,7 +178,9 @@ function healthResponse(extra = {}) {
       ...(handlerError ? { handlerError } : {}),
       ...extra
     },
-    { status: ok ? 200 : 500 }
+    {
+      status: ok ? 200 : 500
+    }
   );
 }
 
@@ -187,7 +207,9 @@ export default {
     const pathname = url.pathname;
 
     if (pathname === '/api/health') {
-      if (bootError) return healthResponse();
+      if (bootError) {
+        return healthResponse();
+      }
 
       if (!nodeHandler) {
         return healthResponse({
@@ -225,7 +247,9 @@ export default {
             errorName: bootError.name,
             stack: bootError.stack
           },
-          { status: 500 }
+          {
+            status: 500
+          }
         );
       }
 
@@ -236,7 +260,9 @@ export default {
             error: 'HTTP adapter is not initialized',
             runtime: 'cloudflare'
           },
-          { status: 503 }
+          {
+            status: 503
+          }
         );
       }
 
@@ -255,12 +281,14 @@ export default {
             runtime: 'cloudflare',
             phase: 'api-handler'
           },
-          { status: 500 }
+          {
+            status: 500
+          }
         );
       }
     }
 
-    // Frontend and admin panel assets.
+    // Serve frontend and admin assets.
     if (env?.ASSETS) {
       try {
         const rewrittenUrl = new URL(request.url);
@@ -274,15 +302,20 @@ export default {
         return await env.ASSETS.fetch(assetRequest);
       } catch (error) {
         return new Response(
-          'Assets error: ' + (error?.message || String(error)),
-          { status: 500 }
+          'Assets error: ' +
+          (error?.message || String(error)),
+          {
+            status: 500
+          }
         );
       }
     }
 
     return new Response(
       'Static assets are not configured. Check the ASSETS binding in wrangler.toml.',
-      { status: 500 }
+      {
+        status: 500
+      }
     );
   },
 
@@ -303,7 +336,9 @@ export default {
         'runMiningPauseNotify'
       );
 
-      if (typeof jobModule.runMiningPauseNotify === 'function') {
+      if (
+        typeof jobModule.runMiningPauseNotify === 'function'
+      ) {
         await jobModule.runMiningPauseNotify();
       }
     } catch (error) {
