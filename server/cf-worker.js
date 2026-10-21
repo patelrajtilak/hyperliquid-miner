@@ -1,118 +1,174 @@
 /**
- * Cloudflare Workers entry — Express via node:http + httpServerHandler
- * Requires compatibility_flags = ["nodejs_compat"] and compatibility_date >= 2025-09-15
+ * Cloudflare Workers entry — hardened for nodejs_compat
  *
- * Persistence: uses KV binding HYPE_DB when available (set in wrangler.toml).
- * Without KV the store is in-memory only (lost on isolate recycle).
- *
- * Static assets: served by the [assets] binding (public/). Express never
- * touches the filesystem on CF.
- *
- * iconv-lite workaround:
- *   body-parser (transitive via express) loads iconv-lite, which does
- *   require_streams()(iconv) when process.versions.node is set.
- *   Wrangler's browser-field rewrite turns that into a non-function.
- *   We temporarily clear process.versions.node before the first require
- *   of express/app so the streams extension is skipped. JSON bodies are
- *   handled by the custom parser in app.js (no body-parser needed).
+ * - Lazy-requires db/app so a boot error never becomes a bare 1101
+ * - /api/health always returns JSON (success or diagnostic error)
+ * - HYPE_DB KV for persistence
+ * - ASSETS binding for static files
+ * - iconv-lite streams workaround (process.versions.node)
  */
-const { setKvBinding, loadFromKv, migrate, seed } = require('./db');
-
 let app = null;
 let booted = false;
 let bootPromise = null;
+let bootError = null;
 let nodeHandler = null;
 
 async function ensureBoot(env) {
   if (booted) return;
   if (bootPromise) return bootPromise;
+
   bootPromise = (async () => {
-    // Inject KV into db layer if present
-    if (env && env.HYPE_DB) {
-      setKvBinding(env.HYPE_DB);
-      await loadFromKv();
-    }
-    // Make secrets / vars available as process.env
-    if (env) {
-      for (const key of Object.keys(env)) {
-        if (typeof env[key] === 'string' && !process.env[key]) {
-          process.env[key] = env[key];
-        }
-      }
-    }
-    process.env.CLOUDFLARE = '1';
-    process.env.NODE_ENV = process.env.NODE_ENV || 'production';
-
-    // --- iconv-lite / body-parser streams fix ---
-    // Must run BEFORE any require() that pulls in express → body-parser → iconv-lite
-    const savedNodeVer = process.versions && process.versions.node;
     try {
-      if (process.versions) {
-        // Make the iconv-lite "if (nodeVer)" branch false so it never calls require_streams()
-        Object.defineProperty(process.versions, 'node', {
-          value: undefined,
-          configurable: true,
-          writable: true
-        });
-      }
-      // Now safe to load Express app factory
-      const { createApp } = require('./app');
-      migrate();
-      seed();
-      app = createApp();
-    } finally {
-      // Restore for any other code that expects a real node version string
-      if (process.versions && savedNodeVer !== undefined) {
-        try {
-          Object.defineProperty(process.versions, 'node', {
-            value: savedNodeVer,
-            configurable: true,
-            writable: true
-          });
-        } catch (_) {
-          process.versions.node = savedNodeVer;
+      // Mark CF early so db.js skips __dirname / FS paths
+      process.env.CLOUDFLARE = '1';
+      process.env.NODE_ENV = process.env.NODE_ENV || 'production';
+
+      // Inject string secrets/vars into process.env
+      if (env) {
+        for (const key of Object.keys(env)) {
+          if (typeof env[key] === 'string' && !process.env[key]) {
+            process.env[key] = env[key];
+          }
         }
       }
-    }
 
-    booted = true;
-    console.log('[cf-worker] app booted');
+      // --- iconv-lite fix: must run BEFORE requiring express/app ---
+      const savedNodeVer =
+        process.versions && typeof process.versions.node === 'string'
+          ? process.versions.node
+          : undefined;
+      try {
+        if (process.versions) {
+          try {
+            Object.defineProperty(process.versions, 'node', {
+              value: undefined,
+              configurable: true,
+              writable: true
+            });
+          } catch (_) {
+            try { process.versions.node = undefined; } catch (_) {}
+          }
+        }
+
+        // Lazy require — never at module top-level
+        const db = require('./db');
+        const { createApp } = require('./app');
+
+        if (env && env.HYPE_DB) {
+          db.setKvBinding(env.HYPE_DB);
+          await db.loadFromKv();
+        }
+
+        db.migrate();
+        db.seed();
+        app = createApp();
+      } finally {
+        if (process.versions && savedNodeVer !== undefined) {
+          try {
+            Object.defineProperty(process.versions, 'node', {
+              value: savedNodeVer,
+              configurable: true,
+              writable: true
+            });
+          } catch (_) {
+            try { process.versions.node = savedNodeVer; } catch (_) {}
+          }
+        }
+      }
+
+      booted = true;
+      bootError = null;
+      console.log('[cf-worker] app booted OK');
+    } catch (e) {
+      bootError = {
+        message: e && e.message ? e.message : String(e),
+        stack: e && e.stack ? String(e.stack).slice(0, 1500) : null,
+        name: e && e.name ? e.name : 'Error'
+      };
+      console.error('[cf-worker] BOOT FAILED:', bootError.message, bootError.stack);
+      // Do not rethrow — fetch handler will return diagnostic JSON
+    }
   })();
+
   return bootPromise;
 }
 
 function getHttpServerHandler() {
   if (nodeHandler) return nodeHandler;
+  if (!app) return null;
   try {
     const { httpServerHandler } = require('cloudflare:node');
     nodeHandler = httpServerHandler(app);
     return nodeHandler;
   } catch (e) {
-    console.warn('[cf-worker] cloudflare:node httpServerHandler unavailable:', e.message);
+    console.warn('[cf-worker] httpServerHandler unavailable:', e && e.message);
     return null;
   }
 }
 
-/** Rewrite friendly admin paths to the real static file */
 function rewriteAdminPath(url) {
   const adminPath = (process.env.ADMIN_PANEL_PATH || '/hq-control').replace(/\/$/, '');
   const pathname = url.pathname.replace(/\/$/, '') || '/';
-  const adminPaths = new Set([adminPath, '/admin']);
-  if (adminPaths.has(pathname)) {
+  if (pathname === adminPath || pathname === '/admin') {
     url.pathname = '/admin.html';
     return true;
   }
   return false;
 }
 
+function healthResponse(extra) {
+  return Response.json({
+    ok: !bootError,
+    time: new Date().toISOString(),
+    runtime: 'cloudflare',
+    booted: booted,
+    ...(bootError
+      ? { error: bootError.message, errorName: bootError.name, stack: bootError.stack }
+      : {}),
+    ...(extra || {})
+  }, { status: bootError ? 500 : 200 });
+}
+
 export default {
   async fetch(request, env, ctx) {
-    await ensureBoot(env);
+    try {
+      await ensureBoot(env);
+    } catch (e) {
+      return Response.json({
+        ok: false,
+        error: e && e.message ? e.message : String(e),
+        runtime: 'cloudflare',
+        phase: 'ensureBoot'
+      }, { status: 500 });
+    }
 
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // API + dynamic routes → Express (via node:http adapter)
+    // Always answer health — even if boot failed (shows real error, not 1101)
+    if (path === '/api/health') {
+      if (bootError) return healthResponse();
+      const handler = getHttpServerHandler();
+      if (handler) {
+        try {
+          return await handler.fetch(request, env, ctx);
+        } catch (e) {
+          return healthResponse({ expressError: e && e.message ? e.message : String(e) });
+        }
+      }
+      return healthResponse({ note: 'express handler not ready' });
+    }
+
+    if (bootError && path.startsWith('/api')) {
+      return Response.json({
+        ok: false,
+        error: bootError.message,
+        errorName: bootError.name,
+        stack: bootError.stack,
+        runtime: 'cloudflare'
+      }, { status: 500 });
+    }
+
     const isApi =
       path.startsWith('/api') ||
       path === '/tonconnect-manifest.json';
@@ -120,48 +176,58 @@ export default {
     if (isApi) {
       const handler = getHttpServerHandler();
       if (handler) {
-        return handler.fetch(request, env, ctx);
+        try {
+          return await handler.fetch(request, env, ctx);
+        } catch (e) {
+          return Response.json({
+            ok: false,
+            error: e && e.message ? e.message : String(e),
+            runtime: 'cloudflare',
+            phase: 'express'
+          }, { status: 500 });
+        }
       }
-      if (path === '/api/health') {
-        return Response.json({
-          ok: true,
-          time: new Date().toISOString(),
-          runtime: 'cloudflare-fallback'
-        });
-      }
-      return new Response('Hyperliquid Miner — enable nodejs_compat + httpServerHandler', {
-        status: 503
-      });
+      return new Response(
+        'Hyperliquid Miner — httpServerHandler unavailable. Check compatibility_flags = ["nodejs_compat"] and compatibility_date >= 2025-09-15',
+        { status: 503 }
+      );
     }
 
-    // Everything else → static assets binding
-    if (env.ASSETS) {
-      const rewritten = new URL(request.url);
-      rewriteAdminPath(rewritten);
-      const assetReq =
-        rewritten.pathname !== url.pathname
-          ? new Request(rewritten.toString(), request)
-          : request;
-      return env.ASSETS.fetch(assetReq);
+    if (env && env.ASSETS) {
+      try {
+        const rewritten = new URL(request.url);
+        rewriteAdminPath(rewritten);
+        const assetReq =
+          rewritten.pathname !== url.pathname
+            ? new Request(rewritten.toString(), request)
+            : request;
+        return env.ASSETS.fetch(assetReq);
+      } catch (e) {
+        return new Response('Assets error: ' + (e && e.message ? e.message : String(e)), {
+          status: 500
+        });
+      }
     }
 
     return new Response(
-      'Static assets not configured. Add [assets] directory = "./public" in wrangler.toml',
+      'Static assets not configured. Add [assets] directory = "./public" binding = "ASSETS" in wrangler.toml',
       { status: 500 }
     );
   },
 
   async scheduled(event, env, ctx) {
-    await ensureBoot(env);
     try {
+      await ensureBoot(env);
+      if (bootError) {
+        console.warn('[cron] skipped — boot failed:', bootError.message);
+        return;
+      }
       const job = require('./jobs/miningPauseNotify');
       if (typeof job.runMiningPauseNotify === 'function') {
         await job.runMiningPauseNotify();
-      } else if (typeof job.startMiningPauseScheduler === 'function') {
-        console.log('[cron] mining pause check (scheduler present)');
       }
     } catch (e) {
-      console.warn('scheduled mining pause failed', e.message);
+      console.warn('scheduled mining pause failed', e && e.message);
     }
   }
 };
