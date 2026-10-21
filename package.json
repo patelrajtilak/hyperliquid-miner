@@ -1,0 +1,46 @@
+{
+  "name": "hyperliquid-miner",
+  "version": "1.0.0",
+  "description": "Hyperliquid Miner (HYPE MINER) — Telegram Mini App for mining HYPE points on TON ecosystem",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "nodemon server/index.js",
+    "migrate": "node server/db.js migrate",
+    "seed": "node server/db.js seed",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy"
+  },
+  "keywords": [
+    "telegram",
+    "mini-app",
+    "mining",
+    "ton",
+    "hype",
+    "hyperliquid",
+    "cloudflare"
+  ],
+  "author": "HYPE Ecosystem",
+  "license": "MIT",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "uuid": "^11.0.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9",
+    "wrangler": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "overrides": {
+    "iconv-lite": "0.6.3"
+  }
+}
