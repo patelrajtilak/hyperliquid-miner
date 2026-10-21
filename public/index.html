@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#050810" />
+  <title>HYPE MINER</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://unpkg.com/@tonconnect/ui@2.0.11/dist/tonconnect-ui.min.js"></script>
+  <link rel="stylesheet" href="/css/style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <!-- Critical: keep coin small even if main CSS is slow -->
+  <style>
+    #loading-screen {
+      position: fixed; inset: 0; z-index: 9999;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column;
+      background: radial-gradient(ellipse at center, #0a1528 0%, #050810 70%);
+    }
+    #loading-screen:not(.active) { display: none !important; }
+    #loading-screen .loader {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      max-width: 90vw;
+    }
+    #loading-screen .load-coin {
+      width: 96px !important; height: 96px !important;
+      max-width: 96px !important; max-height: 96px !important;
+      border-radius: 50% !important; object-fit: cover !important;
+      display: block;
+      animation: loadSpin 3.5s linear infinite;
+      filter: drop-shadow(0 0 20px rgba(0,232,255,0.5));
+    }
+    @keyframes loadSpin {
+      from { transform: rotateY(0deg); }
+      to { transform: rotateY(360deg); }
+    }
+    #loading-screen .loading-text {
+      margin-top: 18px; color: #7d92a8; font-size: 14px;
+      font-family: Inter, system-ui, sans-serif; text-align: center; padding: 0 16px;
+    }
+    #loading-screen .loading-sub {
+      margin-top: 8px; color: #5a6e82; font-size: 12px;
+      text-align: center; max-width: 280px; line-height: 1.4;
+    }
+    #loading-screen .retry-btn {
+      margin-top: 20px; padding: 12px 24px; border-radius: 12px;
+      border: 1px solid rgba(0,232,255,0.4); background: rgba(0,232,255,0.12);
+      color: #00e8ff; font-weight: 600; font-size: 14px; cursor: pointer; display: none;
+    }
+    #loading-screen.show-retry .retry-btn { display: inline-block; }
+  </style>
+</head>
+<body>
+  <div class="ambient ambient-left"></div>
+  <div class="ambient ambient-right"></div>
+
+  <div id="app">
+    <div id="loading-screen" class="screen active">
+      <div class="loader">
+        <img src="/assets/hype-coin.png" alt="HYPE" class="load-coin" width="96" height="96" />
+        <p class="loading-text" id="loading-text">Initializing HYPE Miner…</p>
+        <p class="loading-sub" id="loading-sub"></p>
+        <button type="button" class="retry-btn" id="loading-retry">Retry</button>
+      </div>
+    </div>
+
+    <div id="main-app" class="screen">
+      <header class="app-header">
+        <div class="user-chip">
+          <div class="avatar" id="user-avatar">H</div>
+          <div class="user-meta">
+            <span class="username" id="header-username">Miner</span>
+            <span class="level" id="header-level">Lvl 1</span>
+          </div>
+        </div>
+        <img src="/assets/hype-coin.png" alt="" class="header-coin" />
+      </header>
+
+      <main id="pages">
+        <!-- MINE -->
+        <section id="page-mine" class="page active">
+          <div class="top-actions">
+            <button class="pill-btn" id="btn-connect-wallet-jump">
+              <img src="/assets/ton.svg" alt="" class="token-logo-xs" style="margin-right:4px" /> Connect Wallet
+            </button>
+            <button class="pill-btn" id="btn-withdraw-jump">Withdraw</button>
+          </div>
+
+          <div class="glass-card assets-card">
+            <div class="assets-head">
+              <div class="token-pill">
+                <img src="/assets/hype-coin.png" alt="" />
+                <span>TOTAL ASSETS</span>
+              </div>
+              <div class="usd-approx" id="usd-approx">≈ $0.0000 USD</div>
+            </div>
+            <div class="big-balance">
+              <span id="balance">0.0000</span> <span class="sym">HYPE</span>
+            </div>
+            <div class="avail">Available to withdraw</div>
+
+            <div class="two-col">
+              <div>
+                <div class="muted-label">Holding balance</div>
+                <div class="val cyan" id="holding">0.0000 HYPE</div>
+              </div>
+              <div class="right">
+                <div class="muted-label">Unlocks every 24h</div>
+                <div class="val gold">5%</div>
+              </div>
+            </div>
+            <div class="two-col" style="margin-top:12px">
+              <div>
+                <div class="muted-label">Today PnL</div>
+                <div class="val green" id="today-pnl">+0.0000 HYPE</div>
+              </div>
+              <div class="right">
+                <div class="muted-label">Miner Tier Level</div>
+                <div class="val cyan" id="tier-level">Level 1 / 1000</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card mine-action-card">
+            <div class="reward-line">
+              <span class="label">CYCLE STAKING REWARD</span>
+              <div class="reward-value">
+                <img src="/assets/hype-coin.png" class="mini-coin" alt="" />
+                <span id="mine-reward">+1.2500</span>
+                <span class="unit">HYPE</span>
+              </div>
+            </div>
+            <div class="ecosystem-line muted small">
+              <img src="/assets/hype-coin.png" alt="" class="token-logo-xs" /> HYPE TOKEN
+              <span class="pair-sep">·</span>
+              <img src="/assets/ton.svg" alt="" class="token-logo-xs" /> TON ECOSYSTEM
+            </div>
+            <div class="coin-stage">
+              <div class="energy-ring"></div>
+              <button class="mine-btn" id="mine-btn" aria-label="Mine">
+                <img src="/assets/hype-coin.png" alt="Mine" class="mine-coin-img" />
+              </button>
+              <div class="energy-info">
+                <span id="energy-text">100 / 100</span>
+                <div class="energy-bar"><div class="energy-fill" id="energy-fill"></div></div>
+              </div>
+              <div class="cooldown-line">Cooldown: <span id="cooldown">Ready</span></div>
+            </div>
+            <button class="btn secondary full" id="claim-holding-btn" style="display:none">Unlock Holding 5%</button>
+          </div>
+        </section>
+
+        <!-- TASKS -->
+        <section id="page-tasks" class="page">
+          <div class="page-title"><h2>HYPE Tasks</h2><p>Complete tasks to earn HYPE</p></div>
+          <div id="tasks-list" class="tasks-list"><div class="empty-state">Loading…</div></div>
+        </section>
+
+        <!-- SQUAD / Friends -->
+        <section id="page-squad" class="page">
+          <div class="page-title"><h2>Referral Squad</h2><p>Grow your team · earn passive HYPE</p></div>
+          <div class="glass-card">
+            <div class="squad-stats">
+              <div class="squad-stat"><span class="num" id="friends-count">0</span><span class="lbl">Friends</span></div>
+              <div class="squad-stat"><span class="num" id="bonus-amount">+25</span><span class="lbl">Bonus</span></div>
+              <div class="squad-stat"><span class="num" id="commission-pct">5%</span><span class="lbl">Commission</span></div>
+            </div>
+            <div class="invite-box">
+              <label>Your invite link</label>
+              <div class="invite-row">
+                <input type="text" id="invite-link" readonly />
+                <button class="btn primary" id="copy-link">Copy</button>
+              </div>
+              <button class="btn secondary full" id="share-link">Share in Telegram Chat</button>
+
+              <label style="margin-top:14px;display:block">Channel button link</label>
+              <p class="muted small">Channel post me URL button ke liye ye link paste karo</p>
+              <div class="invite-row">
+                <input type="text" id="channel-button-link" readonly placeholder="https://t.me/YourBot?startapp=…" />
+                <button class="btn primary" id="copy-channel-btn" type="button">Copy</button>
+              </div>
+              <p class="muted small" id="channel-btn-hint" style="margin-top:8px">
+                Channel → New post → Button → URL → paste link → text: <strong>Open HYPE Miner</strong>
+              </p>
+            </div>
+          </div>
+          <div class="glass-card" style="margin-top:12px">
+            <div class="row-between">
+              <h3>Our Squad</h3>
+              <span class="badge" id="squad-miners">0 miners</span>
+            </div>
+            <div id="squad-list" class="squad-list"><div class="empty-state">No friends yet. Share your link!</div></div>
+          </div>
+          <div class="glass-card" style="margin-top:12px">
+            <div class="info-row"><span>🎁 Invite bonus</span><span class="muted" id="info-bonus-label">+25 HYPE / friend</span></div>
+            <div class="info-row"><span>% Team commission</span><span class="muted" id="info-commission-label">5% of squad mining</span></div>
+            <div class="how-box">
+              <h4>★ HOW REWARDS WORK</h4>
+              <p id="how-invite-text"><strong>Invite bonus</strong> — Share your link. When a friend joins, bonus HYPE goes to holding.</p>
+              <p id="how-team-text"><strong>Team mining share</strong> — You receive a % of every HYPE your squad mines into holding.</p>
+            </div>
+          </div>
+        </section>
+
+        
+        <!-- LEADERBOARD -->
+        <section id="page-leaderboard" class="page">
+          <div class="page-title">
+            <h2>Leaderboard</h2>
+            <p>Top 100 · most HYPE mined</p>
+          </div>
+          <div class="glass-card" id="lb-my-card" style="margin-bottom:12px">
+            <div class="lb-my-row">
+              <span class="lb-rank" id="lb-my-rank">—</span>
+              <div class="lb-my-info">
+                <strong id="lb-my-name">You</strong>
+                <span class="muted small" id="lb-my-meta">Loading…</span>
+              </div>
+              <div class="lb-hype">
+                <img src="/assets/hype-coin.png" alt="" class="token-logo-xs" />
+                <span id="lb-my-hype">0</span>
+              </div>
+            </div>
+          </div>
+          <div class="glass-card">
+            <div class="row-between" style="margin-bottom:10px">
+              <h3>Top miners</h3>
+              <span class="badge" id="lb-total">0 players</span>
+            </div>
+            <div id="leaderboard-list" class="lb-list">
+              <div class="empty-state">Loading…</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- MARKET -->
+        <section id="page-market" class="page">
+          <div class="glass-card chart-card">
+            <div class="chart-head">
+              <div>
+                <div class="live-row"><span class="live-dot"></span>
+                  <strong class="pair-with-logos">
+                    <img src="/assets/hype-coin.png" alt="HYPE" class="token-logo-sm" /> HYPE
+                    <span class="pair-sep">/</span>
+                    <img src="/assets/usdt.svg" alt="USDT" class="token-logo-sm" /> USDT
+                  </strong>
+                </div>
+                <div class="muted-label">LIVE MARKET · HYPE / USDT</div>
+              </div>
+              <span class="live-badge">LIVE</span>
+            </div>
+            <div class="tf-row" id="tf-row">
+              <button data-tf="15m">15m</button>
+              <button data-tf="30m">30m</button>
+              <button data-tf="1h" class="on">1h</button>
+              <button data-tf="4h">4h</button>
+              <button data-tf="24h">24h</button>
+            </div>
+            <div class="price-grid" id="price-grid">
+              <div><span class="muted-label">LIVE PRICE</span><div class="val" id="m-price">—</div></div>
+              <div><span class="muted-label">MARKET CAP</span><div class="val" id="m-cap">—</div></div>
+              <div><span class="muted-label">24H VOLUME</span><div class="val" id="m-vol">—</div></div>
+              <div><span class="muted-label">24H HIGH/LOW</span><div class="val" id="m-hl">—</div></div>
+            </div>
+            <canvas id="hype-chart" width="360" height="160"></canvas>
+            <div class="pool-mini" id="pool-mini"></div>
+          </div>
+        </section>
+
+        <!-- PROFILE -->
+        <section id="page-profile" class="page">
+          <div class="page-title">
+            <h2>HYPE Profile</h2>
+            <p>Account identity, verification, assets & mining pool</p>
+          </div>
+          <div class="glass-card">
+            <div class="profile-header">
+              <div class="avatar large" id="profile-avatar">H</div>
+              <div>
+                <strong id="profile-name">Miner</strong>
+                <div class="muted" id="profile-id">ID —</div>
+              </div>
+              <img src="/assets/hype-coin.png" class="profile-token" alt="" />
+            </div>
+
+            <div class="level-box">
+              <div class="lvl-left">
+                <span class="lvl-num" id="mine-level">1</span>
+                <div>
+                  <strong>Miner Level <span id="mine-level-text">1</span> / 1000</strong>
+                  <div class="muted small">Auto-updates on balance milestones</div>
+                </div>
+              </div>
+              <div class="lvl-right">
+                <div class="val cyan" id="hash-rate">0.20 TH/s</div>
+                <div class="muted small" id="cycle-rate">+1.2500 HYPE/cycle</div>
+              </div>
+              <div class="xp-bar full"><div class="xp-fill" id="xp-fill" style="width:0%"></div></div>
+            </div>
+
+            <div class="status-box" id="verify-box">
+              <div class="status-title">Account Status: <span class="warn" id="verify-label">NOT VERIFIED</span></div>
+              <p class="muted small">1) Connect wallet · 2) Send <strong>0.1 TON</strong> to treasury to verify</p>
+              <button class="btn primary full connect-wallet-btn" id="connect-wallet-btn">
+                <img src="/assets/ton.svg" alt="" class="btn-logo" />
+                CONNECT WALLET
+              </button>
+              <button class="btn secondary full hidden" id="disconnect-wallet-btn" type="button">
+                <img src="/assets/ton.svg" alt="" class="btn-logo" />
+                DISCONNECT WALLET
+              </button>
+              <div class="wallet-options-hint muted small" id="wallet-options-hint">Tonkeeper · Telegram Wallet · MyTonWallet</div>
+
+              <div class="treasury-box ton-treasury" id="ton-verify-box" style="margin-top:12px">
+                <div class="muted-label">TON TREASURY · VERIFY (0.1 TON)</div>
+                <div class="invite-row" style="margin-top:6px">
+                  <input type="text" id="ton-treasury-address" readonly placeholder="TON treasury address" />
+                  <button class="btn primary" id="copy-ton-treasury" type="button">Copy</button>
+                </div>
+                <p class="muted small" style="margin-top:6px">Network: TON · Amount: <strong id="ton-verify-amt">0.1 TON</strong></p>
+                <input type="text" id="ton-verify-tx" placeholder="TON transaction hash" style="width:100%;margin-top:8px" />
+                <button class="btn secondary full" id="submit-ton-verify-btn" style="margin-top:8px">I paid 0.1 TON</button>
+                <p class="muted small" id="ton-verify-status" style="margin-top:8px"></p>
+              </div>
+            </div>
+
+            <div class="assets-mini">
+              <div class="muted-label">TOTAL ASSETS</div>
+              <div class="big-balance sm">
+                <img src="/assets/hype-coin.png" alt="" class="token-logo-md" />
+                <span id="profile-balance">0.0000</span> HYPE
+              </div>
+              <div class="muted small">Holding <span id="profile-holding">0</span> · Total mined <span id="profile-total">0</span></div>
+            </div>
+
+            <div class="wallet-section">
+              <h4>Balances</h4>
+              <div class="profile-stats balances-with-logos">
+                <div class="bal-row">
+                  <span class="lbl"><img src="/assets/hype-coin.png" alt="" class="token-logo-sm" /> HYPE</span>
+                  <span id="bal-hype">0</span>
+                </div>
+                <div class="bal-row">
+                  <span class="lbl"><img src="/assets/ton.svg" alt="" class="token-logo-sm" /> TON</span>
+                  <span id="bal-ton">0</span>
+                </div>
+                <div class="bal-row">
+                  <span class="lbl"><img src="/assets/hype-coin.png" alt="" class="token-logo-sm" /> HYPE GRAM</span>
+                  <span id="bal-gram">0</span>
+                </div>
+                <div class="bal-row">
+                  <span class="lbl"><img src="/assets/usdt.svg" alt="" class="token-logo-sm" /> USDT</span>
+                  <span id="bal-usdt">0</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="wallet-section">
+              <h4>Swap</h4>
+              <p class="muted small">Convert HYPE to TON or HYPE GRAM</p>
+              <input type="number" id="swap-amount" placeholder="HYPE amount" min="1" step="0.1" />
+              <div class="invite-row" style="margin-top:8px">
+                <button class="btn primary" id="swap-ton-btn" style="flex:1">
+                  <img src="/assets/ton.svg" alt="" class="btn-logo-sm" /> → TON
+                </button>
+                <button class="btn secondary" id="swap-gram-btn" style="flex:1">
+                  <img src="/assets/hype-coin.png" alt="" class="btn-logo-sm" /> → HYPE GRAM
+                </button>
+              </div>
+              <p class="muted small" id="swap-rates" style="margin-top:8px"></p>
+            </div>
+
+            <div class="wallet-section" id="deposit-section">
+              <h4>Unlock withdrawals (after swap)</h4>
+              <p class="muted small">After swapping HYPE, send <strong id="dep-min">0.5</strong> <img src="/assets/usdt.svg" alt="" class="token-logo-xs" /> <strong>USDT</strong> to the USDT treasury to unlock withdrawals.</p>
+              <div class="treasury-box">
+                <div class="muted-label">USDT TREASURY</div>
+                <div class="invite-row" style="margin-top:6px">
+                  <input type="text" id="deposit-address" readonly placeholder="USDT treasury address" />
+                  <button class="btn primary" id="copy-deposit" type="button">Copy</button>
+                </div>
+                <p class="muted small" id="deposit-network" style="margin-top:6px">Network: BEP20</p>
+                <p class="muted small" id="deposit-amount-hint">Amount: <strong>0.5 USDT</strong> only</p>
+              </div>
+              <input type="text" id="deposit-tx" placeholder="USDT transaction hash / TxID" style="width:100%;margin-top:10px" />
+              <button class="btn secondary full" id="submit-deposit-btn" style="margin-top:8px">I have paid 0.5 USDT</button>
+              <p class="muted small" id="unlock-status" style="margin-top:8px"></p>
+            </div>
+
+            <div class="withdraw-section">
+              <h4>Withdraw</h4>
+              <div class="withdraw-notice" id="withdraw-notice">
+                <p class="muted small"><strong>To withdraw you need:</strong></p>
+                <ul class="muted small withdraw-steps">
+                  <li>Wallet connected</li>
+                  <li>Verified (0.1 TON paid)</li>
+                  <li>Unlock fee (0.5 USDT paid)</li>
+                  <li>Admin opens withdrawal window</li>
+                </ul>
+                <p class="muted small" id="withdraw-gate-msg">Complete steps above, then request withdrawal.</p>
+              </div>
+              <label class="muted small" for="withdraw-asset">Asset</label>
+              <select id="withdraw-asset" class="input-lg">
+                <option value="TON">TON</option>
+                <option value="GRAM">HYPE GRAM</option>
+                <option value="HYPE">HYPE</option>
+              </select>
+              <label class="muted small" for="withdraw-amount" style="margin-top:10px;display:block">Amount</label>
+              <input type="number" id="withdraw-amount" class="input-lg input-amount" placeholder="Enter amount" inputmode="decimal" min="0" step="0.0001" />
+              <button class="btn secondary full" id="withdraw-btn" style="margin-top:12px">Request Withdrawal</button>
+              <p class="muted small" id="wallet-status" style="margin-top:8px">Wallet not connected</p>
+              <p class="muted small" id="withdraw-result" style="margin-top:6px"></p>
+            </div>
+
+            <!-- HQ: hidden. Open by tapping profile avatar 5× quickly -->
+            <button type="button" class="btn ghost full hidden" id="btn-open-admin" style="margin-top:20px;opacity:0.55;font-size:12px">
+              ⚙ Staff / HQ Login
+            </button>
+          </div>
+        </section>
+
+        <!-- ADMIN HQ (inside Mini App — no external browser) -->
+        <section id="page-admin" class="page">
+          <div class="page-title">
+            <h2>HYPE HQ</h2>
+            <p>Admin panel · inside Telegram</p>
+          </div>
+
+          <div class="glass-card" id="admin-login-card">
+            <h4>Admin login</h4>
+            <p class="muted small">Username &amp; password from server env</p>
+            <input type="text" id="admin-user" placeholder="Username" autocomplete="username" style="width:100%;margin-top:8px" />
+            <input type="password" id="admin-pass" placeholder="Password" autocomplete="current-password" style="width:100%;margin-top:8px" />
+            <button type="button" class="btn primary full" id="admin-login-btn" style="margin-top:12px">Sign in</button>
+            <p class="muted small" id="admin-login-msg" style="margin-top:8px"></p>
+          </div>
+
+          <div id="admin-panel" class="hidden">
+            <div class="admin-tabs" id="admin-tabs">
+              <button type="button" class="pill-btn on" data-atab="dash">Dash</button>
+              <button type="button" class="pill-btn" data-atab="settings">Settings</button>
+              <button type="button" class="pill-btn" data-atab="tasks">Tasks</button>
+              <button type="button" class="pill-btn" data-atab="deposits">Deposits</button>
+              <button type="button" class="pill-btn" data-atab="withdrawals">Withdraw</button>
+              <button type="button" class="pill-btn" data-atab="users">Users</button>
+              <button type="button" class="pill-btn" id="admin-logout-btn">Logout</button>
+            </div>
+
+            <div class="glass-card admin-tab" id="atab-dash">
+              <h4>Network</h4>
+              <div class="admin-stats" id="admin-stats">Loading…</div>
+              <h4 style="margin-top:14px">Bot notify (DIGGO-style)</h4>
+              <p class="muted small">Test Open App + Join Community buttons</p>
+              <input type="text" id="admin-notify-tg" placeholder="Your Telegram numeric ID" style="width:100%;margin-top:6px" />
+              <button type="button" class="btn primary full" id="admin-notify-test" style="margin-top:8px">Send test message</button>
+              <button type="button" class="btn secondary full" id="admin-notify-run" style="margin-top:8px">Run 8h pause job now</button>
+              <p class="muted small" id="admin-notify-msg" style="margin-top:8px"></p>
+            </div>
+
+            <div class="glass-card admin-tab hidden" id="atab-settings">
+              <h4>Settings</h4>
+              <p class="muted small">TON treasury = verify 0.1 TON · USDT address = unlock 0.5 USDT</p>
+              <div id="admin-settings-form" class="admin-settings-form"></div>
+              <button type="button" class="btn primary full" id="admin-save-settings" style="margin-top:12px">Save settings</button>
+              <p class="muted small" id="admin-settings-msg" style="margin-top:8px"></p>
+            </div>
+
+            <div class="glass-card admin-tab hidden" id="atab-tasks">
+              <h4>New task</h4>
+              <p class="muted small">Jo naam likhoge — users ko bilkul wahi dikhega.</p>
+              <div class="admin-task-form" id="admin-task-form">
+                <label class="muted small">Name (users ko yehi dikhega)</label>
+                <input type="text" id="atask-title" placeholder="e.g. Join our Telegram" />
+                <label class="muted small">Link</label>
+                <input type="text" id="atask-url" placeholder="https://…" inputmode="url" />
+                <label class="muted small">Reward HYPE</label>
+                <input type="number" id="atask-reward" placeholder="3" step="0.1" min="0" value="3" />
+                <button type="button" class="btn primary full" id="admin-add-task" style="margin-top:10px">Save &amp; add task</button>
+              </div>
+              <h4 style="margin-top:18px">All tasks</h4>
+              <p class="muted small">Edit karke har task pe <strong>Save</strong> dabao</p>
+              <div id="admin-tasks-list" class="admin-list" style="margin-top:8px">Loading…</div>
+            </div>
+
+            <div class="glass-card admin-tab hidden" id="atab-deposits">
+              <h4>Pending deposits</h4>
+              <div id="admin-deposits-list" class="admin-list">Loading…</div>
+            </div>
+
+            <div class="glass-card admin-tab hidden" id="atab-withdrawals">
+              <h4>Pending withdrawals</h4>
+              <div id="admin-withdrawals-list" class="admin-list">Loading…</div>
+            </div>
+
+            <div class="glass-card admin-tab hidden" id="atab-users">
+              <h4>Users</h4>
+              <input type="text" id="admin-user-search" placeholder="Search username / id" style="width:100%;margin-bottom:10px" />
+              <div id="admin-users-list" class="admin-list">Loading…</div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <nav class="bottom-nav">
+        <button class="nav-item active" data-page="mine"><span class="nav-icon">⬡</span><span>Mine</span></button>
+        <button class="nav-item" data-page="tasks"><span class="nav-icon">☰</span><span>Tasks</span></button>
+        <button class="nav-item" data-page="squad"><span class="nav-icon">👥</span><span>Friends</span></button>
+        <button class="nav-item" data-page="leaderboard"><span class="nav-icon">🏆</span><span>Top</span></button>
+        <button class="nav-item" data-page="market"><span class="nav-icon">📈</span><span>Market</span></button>
+        <button class="nav-item" data-page="profile"><span class="nav-icon">👤</span><span>Profile</span></button>
+        <button class="nav-item hidden" data-page="admin" id="nav-admin"><span class="nav-icon">⚙</span><span>HQ</span></button>
+      </nav>
+    </div>
+    <div id="toast" class="toast"></div>
+  </div>
+
+  <!-- Wallet connect uses official TON Connect modal only (no paste address) -->
+  <script src="/js/app.js"></script>
+</body>
+</html>
