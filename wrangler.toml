@@ -20,3 +20,12 @@ crons = ["*/5 * * * *"]
 
 # Secrets (set via: npx wrangler secret put BOT_TOKEN)
 # BOT_TOKEN, JWT_SECRET, ADMIN_PASSWORD, REFERRAL_SALT, WEBAPP_URL, COMMUNITY_CHANNEL_URL
+[observability]
+enabled = true
+head_sampling_rate = 1.0
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1.0
+invocation_logs = true
+persist = true
