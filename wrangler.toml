@@ -11,8 +11,8 @@ binding = "ASSETS"
 # KV for persistent JSON store (create with: npx wrangler kv namespace create HYPE_DB)
 [[kv_namespaces]]
 binding = "HYPE_DB"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_YOUR_PREVIEW_KV_ID"
+id = "ed2fc4881763493686c6992b16a6a28b"
+preview_id = "c0d8754741734071880b65d200c84d5e"
 
 # Optional Cron for mining-pause notifications (every 5 min)
 [triggers]
