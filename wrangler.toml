@@ -1,0 +1,22 @@
+name = "hyperliquid-miner"
+main = "server/cf-worker.js"
+compatibility_date = "2025-09-15"
+compatibility_flags = ["nodejs_compat"]
+
+# Serve the public/ frontend as static assets
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+# KV for persistent JSON store (create with: npx wrangler kv namespace create HYPE_DB)
+[[kv_namespaces]]
+binding = "HYPE_DB"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_YOUR_PREVIEW_KV_ID"
+
+# Optional Cron for mining-pause notifications (every 5 min)
+[triggers]
+crons = ["*/5 * * * *"]
+
+# Secrets (set via: npx wrangler secret put BOT_TOKEN)
+# BOT_TOKEN, JWT_SECRET, ADMIN_PASSWORD, REFERRAL_SALT, WEBAPP_URL, COMMUNITY_CHANNEL_URL
