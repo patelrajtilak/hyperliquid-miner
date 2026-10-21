@@ -113,4 +113,73 @@ function createApp() {
     max: 5,
     message: { error: 'Mining too fast' }
   });
-  
+    app.use('/api', apiLimiter);
+
+  // Routes
+  app.use('/api/auth', require('./routes/auth'));
+  app.use('/api/mine', mineLimiter, require('./routes/mine'));
+  app.use('/api/tasks', require('./routes/tasks'));
+  app.use('/api/referral', require('./routes/referral'));
+  app.use('/api/profile', require('./routes/profile'));
+  app.use('/api/wallet', require('./routes/wallet'));
+  app.use('/api/swap', require('./routes/swap'));
+  app.use('/api/market', require('./routes/market'));
+  app.use('/api/leaderboard', require('./routes/leaderboard'));
+  app.use('/api/admin', require('./routes/admin'));
+
+  // Health check
+  app.get('/api/health', (req, res) => {
+    res.json({
+      ok: true,
+      time: new Date().toISOString(),
+      runtime: onCF ? 'cloudflare' : 'node'
+    });
+  });
+
+  // TON Connect manifest
+  app.get('/tonconnect-manifest.json', (req, res) => {
+    const host = req.get('host') || 'localhost';
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+    const origin = process.env.WEBAPP_URL || `${proto}://${host}`;
+
+    res.json({
+      url: origin.replace(/\/$/, ''),
+      name: 'HYPE MINER',
+      iconUrl: origin.replace(/\/$/, '') + '/assets/hype-coin.png',
+      termsOfUseUrl: origin,
+      privacyPolicyUrl: origin
+    });
+  });
+
+  // Node static frontend
+  if (!onCF) {
+    const publicDir = path.join(__dirname, '..', 'public');
+
+    app.use(express.static(publicDir));
+
+    app.get('*', (req, res) => {
+      if (req.path.startsWith('/api')) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+      res.sendFile(path.join(publicDir, 'index.html'));
+    });
+  } else {
+    app.use((req, res) => {
+      if (req.path.startsWith('/api')) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+      res.status(404).set('X-CF-Assets', '1').end();
+    });
+  }
+
+  // Error handler
+  app.use((err, req, res, next) => {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  });
+
+  return app;
+}
+
+module.exports = { createApp, isCloudflare };
+module.exports.default = module.exports;
