@@ -16,7 +16,10 @@ const { signUserToken, requireAuth } = require('../middleware/auth');
  * Validates Telegram WebApp initData, creates/updates user, returns JWT + profile
  */
 router.post('/telegram', (req, res) => {
-  const { initData } = req.body;
+  const initData =
+    (req.body && req.body.initData) ||
+    req.headers['x-telegram-init-data'] ||
+    null;
   if (!initData) {
     return res.status(400).json({ error: 'initData required' });
   }
@@ -81,7 +84,6 @@ router.post('/telegram', (req, res) => {
 
   function applyReferralBonus(referrerId, newUserId) {
     if (!referrerId || !newUserId) return;
-    // Already linked?
     const existing = db.prepare('SELECT id FROM referrals WHERE referred_id = ?').get(newUserId);
     if (existing) return;
     const bonus = parseFloat(getSetting('referral_bonus', '25'));
@@ -123,7 +125,6 @@ router.post('/telegram', (req, res) => {
     applyReferralBonus(referredBy, user.id);
 
     db.prepare(`INSERT INTO activity_log (user_id, action, details) VALUES (?, 'register', ?)`).run(user.id, JSON.stringify({ telegram_id: telegramId }));
-    // DIGGO-style welcome with Open + Join Community buttons
     try {
       const appName = getSetting('app_name', 'HYPE MINER');
       const text = buildWelcomeText(appName);
@@ -136,7 +137,6 @@ router.post('/telegram', (req, res) => {
     `).run(tgUser.username || user.username, tgUser.first_name || user.first_name, tgUser.last_name || user.last_name, tgUser.photo_url || user.photo_url, user.id);
     user = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
 
-    // Late referral: existing user never referred, opened invite link from another TG account (same device OK)
     if (!user.referred_by && result.startParam) {
       const referredBy = findReferrerId(result.startParam, telegramId);
       if (referredBy) {
@@ -163,30 +163,6 @@ router.post('/telegram', (req, res) => {
 router.get('/me', requireAuth, (req, res) => {
   res.json({ user: sanitizeUser(req.user) });
 });
-
-function sanitizeUser(u) {
-  const n = (v) => Number((Number(v) || 0).toFixed(4));
-  return {
-    id: u.id,
-    telegramId: u.telegram_id,
-    username: u.username,
-    firstName: u.first_name,
-    lastName: u.last_name,
-    photoUrl: u.photo_url,
-    balance: n(u.balance),
-    holdingBalance: n(u.holding_balance),
-    energy: u.energy || 0,
-    maxEnergy: u.max_energy || 100,
-    minerLevel: u.miner_level || 1,
-    totalMined: n(u.total_mined),
-    referralCode: u.referral_code,
-    walletAddress: u.wallet_address,
-    isVerified: !!u.is_verified,
-    createdAt: u.created_at
-  };
-}
-
-module.exports = router;
 
 /**
  * POST /api/auth/session
@@ -218,3 +194,27 @@ router.post('/session', (req, res) => {
   const token = signUserToken(user.id);
   res.json({ token, isNew: false, user: sanitizeUser(user) });
 });
+
+function sanitizeUser(u) {
+  const n = (v) => Number((Number(v) || 0).toFixed(4));
+  return {
+    id: u.id,
+    telegramId: u.telegram_id,
+    username: u.username,
+    firstName: u.first_name,
+    lastName: u.last_name,
+    photoUrl: u.photo_url,
+    balance: n(u.balance),
+    holdingBalance: n(u.holding_balance),
+    energy: u.energy || 0,
+    maxEnergy: u.max_energy || 100,
+    minerLevel: u.miner_level || 1,
+    totalMined: n(u.total_mined),
+    referralCode: u.referral_code,
+    walletAddress: u.wallet_address,
+    isVerified: !!u.is_verified,
+    createdAt: u.created_at
+  };
+}
+
+module.exports = router;
