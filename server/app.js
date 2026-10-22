@@ -37,17 +37,35 @@ function jsonBodyParser(limitBytes = 1 * 1024 * 1024) {
     }
 
     try {
+      // If adapter already parsed body
+      if (typeof req.body === 'string' && req.body) {
+        try { req.body = JSON.parse(req.body); } catch (_) { req.body = {}; }
+        return next();
+      }
+
       const chunks = [];
       let total = 0;
-      for await (const chunk of req) {
-        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        total += buf.length;
-        if (total > limitBytes) {
-          res.status(413).json({ error: 'Payload too large' });
-          return;
+      const readBody = (async () => {
+        for await (const chunk of req) {
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          total += buf.length;
+          if (total > limitBytes) {
+            const err = new Error('Payload too large');
+            err.status = 413;
+            throw err;
+          }
+          chunks.push(buf);
         }
-        chunks.push(buf);
-      }
+      })();
+
+      // Cloudflare node:http streams can hang — never wait forever
+      await Promise.race([
+        readBody,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Body read timeout')), 8000)
+        )
+      ]);
+
       if (chunks.length === 0) {
         req.body = {};
         return next();
@@ -56,9 +74,18 @@ function jsonBodyParser(limitBytes = 1 * 1024 * 1024) {
       req.body = raw ? JSON.parse(raw) : {};
       next();
     } catch (err) {
+      if (err && err.status === 413) {
+        res.status(413).json({ error: 'Payload too large' });
+        return;
+      }
       if (err instanceof SyntaxError) {
         res.status(400).json({ error: 'Invalid JSON body' });
         return;
+      }
+      if (err && /timeout/i.test(err.message || '')) {
+        // Empty body fallback so auth can still try header-based initData
+        req.body = req.body && typeof req.body === 'object' ? req.body : {};
+        return next();
       }
       next(err);
     }
