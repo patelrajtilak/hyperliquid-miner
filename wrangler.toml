@@ -12,8 +12,8 @@ binding = "ASSETS"
 # se HYPE_DB id copy karke yahan daalo (REPLACE text mat chhodo)
 [[kv_namespaces]]
 binding = "HYPE_DB"
-id = "YOUR_KV_ID_HERE"
-preview_id = "YOUR_KV_PREVIEW_ID_HERE"
+id = "ed2fc4881763493686c6992b16a6a28b"
+preview_id = "c0d8754741734071880b65d200c84d5e"
 
 [triggers]
 crons = ["*/5 * * * *"]
