@@ -1,0 +1,19 @@
+name = "hyperliquid-miner"
+main = "server/cf-worker.js"
+compatibility_date = "2025-09-15"
+compatibility_flags = ["nodejs_compat"]
+
+# Frontend static files
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+# KV — Cloudflare Dashboard → Workers → hyperliquid-miner → Bindings
+# se HYPE_DB id copy karke yahan daalo (REPLACE text mat chhodo)
+[[kv_namespaces]]
+binding = "HYPE_DB"
+id = "YOUR_KV_ID_HERE"
+preview_id = "YOUR_KV_PREVIEW_ID_HERE"
+
+[triggers]
+crons = ["*/5 * * * *"]
