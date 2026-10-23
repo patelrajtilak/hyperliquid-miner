@@ -3,7 +3,9 @@ const { db } = require('../db');
 const { validateInitData } = require('../utils/telegram');
 const { getBotToken, getJwtSecret } = require('../runtime-config');
 
-function JWT_SECRET() { return getJwtSecret(); }
+function JWT_SECRET() {
+  return getJwtSecret();
+}
 
 /**
  * Authenticate via Telegram initData (preferred for Mini App)
@@ -12,14 +14,18 @@ function JWT_SECRET() { return getJwtSecret(); }
 function requireAuth(req, res, next) {
   // 1. Try Authorization header (JWT)
   const authHeader = req.headers.authorization;
+
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
+
     try {
       const payload = jwt.verify(token, JWT_SECRET());
       const user = db.prepare('SELECT * FROM users WHERE id = ?').get(payload.userId);
+
       if (!user || user.is_banned) {
         return res.status(401).json({ error: 'User not found or banned' });
       }
+
       req.user = user;
       return next();
     } catch (e) {
@@ -29,33 +35,48 @@ function requireAuth(req, res, next) {
 
   // 2. Try Telegram initData (first login / refresh)
   const initData = req.headers['x-telegram-init-data'] || req.body?.initData;
+
   if (initData) {
     const botToken = getBotToken() || process.env.BOT_TOKEN;
+
     if (!botToken) {
-      return res.status(500).json({ error: 'Server misconfigured: BOT_TOKEN missing' });
+      return res.status(500).json({
+        error: 'Server misconfigured: BOT_TOKEN missing'
+      });
     }
+
     const result = validateInitData(initData, botToken);
+
     if (!result.valid) {
-      return res.status(401).json({ error: result.error || 'Invalid Telegram data' });
+      return res.status(401).json({
+        error: result.error || 'Invalid Telegram data'
+      });
     }
+
     if (!result.user || !result.user.id) {
       return res.status(401).json({ error: 'No user in initData' });
     }
 
     // Upsert user
-    let user = db.prepare('SELECT * FROM users WHERE telegram_id = ?').get(String(result.user.id));
+    let user = db.prepare(
+      'SELECT * FROM users WHERE telegram_id = ?'
+    ).get(String(result.user.id));
+
     if (!user) {
       // Create new user – handled in auth route usually
       req.telegramUser = result.user;
       req.startParam = result.startParam;
-      return next(); // allow auth route to create
+      return next();
     }
+
     if (user.is_banned) {
       return res.status(403).json({ error: 'Account banned' });
     }
+
     req.user = user;
     req.telegramUser = result.user;
     req.startParam = result.startParam;
+
     return next();
   }
 
@@ -67,13 +88,20 @@ function requireAuth(req, res, next) {
  */
 function optionalAuth(req, res, next) {
   const authHeader = req.headers.authorization;
+
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
       const payload = jwt.verify(authHeader.slice(7), JWT_SECRET());
-      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(payload.userId);
-      if (user && !user.is_banned) req.user = user;
+      const user = db.prepare(
+        'SELECT * FROM users WHERE id = ?'
+      ).get(payload.userId);
+
+      if (user && !user.is_banned) {
+        req.user = user;
+      }
     } catch (_) {}
   }
+
   next();
 }
 
@@ -82,16 +110,26 @@ function optionalAuth(req, res, next) {
  */
 function requireAdmin(req, res, next) {
   const authHeader = req.headers.authorization;
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Admin auth required' });
   }
+
   try {
     const payload = jwt.verify(authHeader.slice(7), JWT_SECRET());
+
     if (payload.role !== 'admin' && payload.role !== 'superadmin') {
       return res.status(403).json({ error: 'Admin role required' });
     }
-    const admin = db.prepare('SELECT id, username, role FROM admins WHERE id = ?').get(payload.adminId);
-    if (!admin) return res.status(401).json({ error: 'Admin not found' });
+
+    const admin = db.prepare(
+      'SELECT id, username, role FROM admins WHERE id = ?'
+    ).get(payload.adminId);
+
+    if (!admin) {
+      return res.status(401).json({ error: 'Admin not found' });
+    }
+
     req.admin = admin;
     next();
   } catch (e) {
@@ -100,11 +138,19 @@ function requireAdmin(req, res, next) {
 }
 
 function signUserToken(userId) {
-  return jwt.sign({ userId, type: 'user' }, JWT_SECRET(), { expiresIn: '7d' });
+  return jwt.sign(
+    { userId, type: 'user' },
+    JWT_SECRET(),
+    { expiresIn: '7d' }
+  );
 }
 
 function signAdminToken(adminId, role) {
-  return jwt.sign({ adminId, role, type: 'admin' }, JWT_SECRET(), { expiresIn: '12h' });
+  return jwt.sign(
+    { adminId, role, type: 'admin' },
+    JWT_SECRET(),
+    { expiresIn: '12h' }
+  );
 }
 
 module.exports = {
