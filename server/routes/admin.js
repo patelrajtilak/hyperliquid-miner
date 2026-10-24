@@ -1,0 +1,555 @@
+const express = require('express');
+const router = express.Router();
+const bcrypt = require('bcryptjs');
+const { db, getSetting, setSetting, deleteSetting, getAllSettings, getStore, saveStore, nextId, transaction } = require('../db');
+const { requireAdmin, requireAuth, signAdminToken } = require('../middleware/auth');
+const { get } = require('../runtime-config');
+
+/**
+ * POST /api/admin/login
+ */
+router.post('/login', (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password required' });
+  }
+
+  const admin = db.prepare('SELECT * FROM admins WHERE username = ?').get(username);
+  if (!admin || !bcrypt.compareSync(password, admin.password_hash)) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  const token = signAdminToken(admin.id, admin.role);
+  res.json({
+    token,
+    admin: { id: admin.id, username: admin.username, role: admin.role }
+  });
+});
+
+/** Owner Telegram IDs with full HQ (default: 8990854464) */
+function getOwnerTelegramIds() {
+  const raw = get('ADMIN_TELEGRAM_IDS', '') || process.env.ADMIN_TELEGRAM_IDS || '8990854464';
+  return String(raw).split(',').map(s => s.trim()).filter(Boolean);
+}
+function isOwnerTelegramId(tgId) {
+  return getOwnerTelegramIds().includes(String(tgId || '').trim());
+}
+
+/**
+ * POST /api/admin/owner-login
+ * Full HQ power for owner Telegram only — no password.
+ */
+router.post('/owner-login', requireAuth, (req, res) => {
+  const tgId = String(req.user.telegram_id || '');
+  if (!isOwnerTelegramId(tgId)) {
+    return res.status(403).json({ error: 'HQ access denied' });
+  }
+  let admin = db.prepare('SELECT * FROM admins WHERE username = ?').get('owner_' + tgId);
+  if (!admin) {
+    const hash = bcrypt.hashSync('owner-' + tgId, 10);
+    try {
+      const info = db.prepare(
+        'INSERT INTO admins (username, password_hash, role) VALUES (?, ?, ?)'
+      ).run('owner_' + tgId, hash, 'superadmin');
+      admin = db.prepare('SELECT * FROM admins WHERE id = ?').get(info.lastInsertRowid);
+    } catch (_) {
+      admin = db.prepare('SELECT * FROM admins WHERE username = ?').get('owner_' + tgId);
+    }
+  }
+  if (!admin) {
+    admin = db.prepare('SELECT * FROM admins LIMIT 1').get();
+  }
+  if (!admin) return res.status(500).json({ error: 'Admin seed missing' });
+  const token = signAdminToken(admin.id, admin.role || 'superadmin');
+  res.json({
+    token,
+    admin: { id: admin.id, username: admin.username, role: admin.role || 'superadmin' },
+    telegramId: tgId,
+    fullPower: true
+  });
+});
+
+router.get('/am-i-owner', requireAuth, (req, res) => {
+  const tgId = String(req.user.telegram_id || '');
+  res.json({ owner: isOwnerTelegramId(tgId), telegramId: tgId });
+});
+
+/**
+ * GET /api/admin/stats
+ */
+router.get('/stats', requireAdmin, (req, res) => {
+  const users = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
+  const totalBalance = db.prepare('SELECT COALESCE(SUM(balance + holding_balance), 0) as s FROM users').get().s;
+  const totalMined = db.prepare('SELECT COALESCE(SUM(total_mined), 0) as s FROM users').get().s;
+  const pendingWithdrawals = db.prepare("SELECT COUNT(*) as c FROM withdrawals WHERE status = 'pending'").get().c;
+  const tasksCompleted = db.prepare("SELECT COUNT(*) as c FROM user_tasks WHERE status = 'claimed'").get().c;
+
+  res.json({
+    users,
+    totalBalance: Number(totalBalance.toFixed(2)),
+    totalMined: Number(totalMined.toFixed(2)),
+    pendingWithdrawals,
+    tasksCompleted
+  });
+});
+
+/**
+ * GET /api/admin/users
+ */
+router.get('/users', requireAdmin, (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page || '1', 10));
+  const limit = Math.min(100, parseInt(req.query.limit || '20', 10));
+  const offset = (page - 1) * limit;
+  const search = req.query.q || '';
+
+  let users, total;
+  if (search) {
+    users = db.prepare(`
+      SELECT id, telegram_id, username, first_name, balance, holding_balance, total_mined,
+             miner_level, is_banned, is_verified, created_at
+      FROM users
+      WHERE username LIKE ? OR first_name LIKE ? OR telegram_id LIKE ?
+      ORDER BY id DESC LIMIT ? OFFSET ?
+    `).all(`%${search}%`, `%${search}%`, `%${search}%`, limit, offset);
+    total = db.prepare(`
+      SELECT COUNT(*) as c FROM users
+      WHERE username LIKE ? OR first_name LIKE ? OR telegram_id LIKE ?
+    `).get(`%${search}%`, `%${search}%`, `%${search}%`).c;
+  } else {
+    users = db.prepare(`
+      SELECT id, telegram_id, username, first_name, balance, holding_balance, total_mined,
+             miner_level, is_banned, is_verified, created_at
+      FROM users ORDER BY id DESC LIMIT ? OFFSET ?
+    `).all(limit, offset);
+    total = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
+  }
+
+  res.json({ users, total, page, limit });
+});
+
+/**
+ * PATCH /api/admin/users/:id
+ */
+router.patch('/users/:id', requireAdmin, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { isBanned, balance, holdingBalance, totalMined } = req.body;
+
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (typeof isBanned === 'boolean') {
+    db.prepare('UPDATE users SET is_banned = ? WHERE id = ?').run(isBanned ? 1 : 0, id);
+  }
+  if (balance != null && balance !== '' && !Number.isNaN(Number(balance))) {
+    db.prepare('UPDATE users SET balance = ? WHERE id = ?').run(Number(balance), id);
+  }
+  if (holdingBalance != null && holdingBalance !== '' && !Number.isNaN(Number(holdingBalance))) {
+    db.prepare('UPDATE users SET holding_balance = ? WHERE id = ?').run(Number(holdingBalance), id);
+  }
+  if (totalMined != null && totalMined !== '' && !Number.isNaN(Number(totalMined))) {
+    db.prepare('UPDATE users SET total_mined = ? WHERE id = ?').run(Number(totalMined), id);
+  }
+
+  res.json({ success: true });
+});
+
+/**
+ * GET/PUT /api/admin/settings
+ */
+router.get('/settings', requireAdmin, (req, res) => {
+  res.json({ settings: getAllSettings() });
+});
+
+function isValidSettingKey(key) {
+  return typeof key === 'string' && /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(key);
+}
+
+router.put('/settings', requireAdmin, (req, res) => {
+  const updates = req.body || {};
+  let n = 0;
+  for (const key of Object.keys(updates)) {
+    if (!isValidSettingKey(key)) continue;
+    if (updates[key] === undefined) continue;
+    setSetting(key, updates[key]);
+    n++;
+  }
+  res.json({ success: true, updated: n, settings: getAllSettings() });
+});
+
+/**
+ * POST /api/admin/settings
+ * Add or overwrite one setting: { key, value }
+ */
+router.post('/settings', requireAdmin, (req, res) => {
+  const key = (req.body && req.body.key != null) ? String(req.body.key).trim() : '';
+  const value = req.body && req.body.value != null ? req.body.value : '';
+  if (!isValidSettingKey(key)) {
+    return res.status(400).json({
+      error: 'Invalid key',
+      tip: 'Use letters, numbers, underscore. Must start with a letter.'
+    });
+  }
+  setSetting(key, value);
+  res.json({ success: true, key, value: String(value), settings: getAllSettings() });
+});
+
+/**
+ * DELETE /api/admin/settings/:key
+ */
+router.delete('/settings/:key', requireAdmin, (req, res) => {
+  const key = String(req.params.key || '').trim();
+  if (!isValidSettingKey(key)) {
+    return res.status(400).json({ error: 'Invalid key' });
+  }
+  const protectedKeys = ['app_name', 'token_symbol'];
+  // still allow delete — admin full control; only warn via response
+  const existed = getAllSettings()[key] !== undefined;
+  if (!existed) return res.status(404).json({ error: 'Setting not found' });
+  if (typeof deleteSetting === 'function') deleteSetting(key);
+  else {
+    const store = getStore();
+    if (store.settings) {
+      delete store.settings[key];
+      saveStore();
+    }
+  }
+  res.json({ success: true, deleted: key, protected: protectedKeys.includes(key), settings: getAllSettings() });
+});
+
+/**
+ * Tasks CRUD
+ */
+router.get('/tasks', requireAdmin, (req, res) => {
+  const tasks = db.prepare('SELECT * FROM tasks ORDER BY sort_order, id').all();
+  res.json({ tasks });
+});
+
+router.post('/tasks', requireAdmin, (req, res) => {
+  const { title, description, reward, type, targetUrl, channelId, sortOrder } = req.body;
+  if (!title || reward == null) {
+    return res.status(400).json({ error: 'title and reward required' });
+  }
+  const info = db.prepare(`
+    INSERT INTO tasks (title, description, reward, type, target_url, channel_id, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(title, description || '', reward, type || 'manual', targetUrl || null, channelId || null, sortOrder || 0);
+
+  res.json({ success: true, id: info.lastInsertRowid });
+});
+
+router.put('/tasks/:id', requireAdmin, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { title, description, reward, type, targetUrl, channelId, isActive, sortOrder } = req.body;
+  const task = db.prepare('SELECT id FROM tasks WHERE id = ?').get(id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  db.prepare(`
+    UPDATE tasks SET
+      title = COALESCE(?, title),
+      description = COALESCE(?, description),
+      reward = COALESCE(?, reward),
+      type = COALESCE(?, type),
+      target_url = COALESCE(?, target_url),
+      channel_id = COALESCE(?, channel_id),
+      is_active = COALESCE(?, is_active),
+      sort_order = COALESCE(?, sort_order)
+    WHERE id = ?
+  `).run(title, description, reward, type, targetUrl, channelId, isActive != null ? (isActive ? 1 : 0) : null, sortOrder, id);
+
+  res.json({ success: true });
+});
+
+router.delete('/tasks/:id', requireAdmin, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { getStore, saveStore } = require('../db');
+  const store = getStore();
+  const before = (store.tasks || []).length;
+  store.tasks = (store.tasks || []).filter(t => t.id !== id);
+  if (store.tasks.length === before) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
+  saveStore();
+  res.json({ success: true });
+});
+
+/** Test DIGGO-style message with Open + Join Community buttons */
+router.post('/notify-test', requireAdmin, async (req, res) => {
+  const {
+    sendBotMessage,
+    buildMiningPauseKeyboard,
+    buildPauseText,
+    getBotLinks
+  } = require('../utils/telegram');
+  const { getSetting } = require('../db');
+  const telegramId = String(req.body.telegramId || req.body.chatId || '').trim();
+  if (!telegramId) {
+    return res.status(400).json({ error: 'telegramId required' });
+  }
+  const hours = parseFloat(getSetting('mining_pause_hours', '8')) || 8;
+  const text = buildPauseText(hours, getSetting('app_name', 'HYPE MINER'));
+  const keyboard = buildMiningPauseKeyboard();
+  const links = getBotLinks();
+  const result = await sendBotMessage(telegramId, text, keyboard);
+  res.json({
+    success: !!(result && result.ok),
+    telegram: result,
+    links,
+    tip: !links.webappUrl
+      ? 'Set WEBAPP_URL on Render (https://your-app.onrender.com) and community_channel_url in HQ Settings'
+      : 'OK'
+  });
+});
+
+/** Force run 8h pause job now */
+router.post('/notify-run', requireAdmin, async (req, res) => {
+  try {
+    const { runMiningPauseNotify } = require('../jobs/miningPauseNotify');
+    const result = await runMiningPauseNotify();
+    res.json({ success: true, result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Withdrawals management
+ */
+router.get('/withdrawals', requireAdmin, (req, res) => {
+  const status = req.query.status || 'pending';
+  const rows = db.prepare(`
+    SELECT w.*, u.username, u.telegram_id, u.first_name
+    FROM withdrawals w
+    JOIN users u ON u.id = w.user_id
+    WHERE w.status = ?
+    ORDER BY w.created_at DESC
+    LIMIT 100
+  `).all(status);
+  res.json({ withdrawals: rows });
+});
+
+router.patch('/withdrawals/:id', requireAdmin, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { status, txHash, adminNote } = req.body;
+  const allowed = ['pending', 'processing', 'completed', 'rejected'];
+  if (!allowed.includes(status)) {
+    return res.status(400).json({ error: 'Invalid status' });
+  }
+
+  const store = getStore();
+  const w = (store.withdrawals || []).find(x => x.id === id);
+  if (!w) return res.status(404).json({ error: 'Withdrawal not found' });
+
+  w.status = status;
+  if (txHash) {
+    w.tx_hash = txHash;
+    w.payout_tx = txHash;
+    const net = String(w.asset || '').toUpperCase() === 'TON' ? 'TON' : 'BEP20';
+    try {
+      const { explorerLink } = require('../utils/txVerify');
+      w.explorer = explorerLink(net, txHash);
+      w.network = net;
+    } catch (_) {
+      w.explorer = net === 'TON'
+        ? 'https://tonscan.org/tx/' + String(txHash).replace(/^.*\//, '')
+        : 'https://bscscan.com/tx/' + (String(txHash).startsWith('0x') ? txHash : txHash);
+    }
+  }
+  if (adminNote != null) w.admin_note = adminNote;
+  w.processed_at = new Date().toISOString();
+  if (status === 'completed' || status === 'paid') {
+    w.completed_at = new Date().toISOString();
+  }
+
+  // If rejected, refund
+  if (status === 'rejected') {
+    const u = store.users.find(x => x.id === w.user_id);
+    if (u) {
+      const field = String(w.asset || 'HYPE').toUpperCase() === 'TON' ? 'ton_balance' : 'balance';
+      u[field] = Number(((u[field] || 0) + Number(w.amount || 0)).toFixed(8));
+      u.updated_at = new Date().toISOString();
+    }
+  }
+
+  saveStore();
+
+  // MRG-style: auto-post to payment channels that are Telegram links
+  let channelPost = null;
+  if (status === 'completed' || status === 'paid') {
+    try {
+      const { postPayoutToChannels } = require('../utils/telegram');
+      const u = store.users.find(x => x.id === w.user_id || String(x.id) === String(w.user_id)) || {};
+      channelPost = await postPayoutToChannels({
+        amount: w.amount,
+        asset: w.asset || 'HYPE',
+        username: u.username || u.first_name || 'Miner',
+        firstName: u.first_name,
+        wallet: w.wallet_address,
+        explorer: w.explorer,
+        txHash: w.payout_tx || w.tx_hash
+      });
+    } catch (e) {
+      channelPost = { ok: false, error: e.message };
+    }
+  }
+
+  res.json({ success: true, withdrawal: w, channelPost });
+});
+
+
+
+/**
+ * GET /api/admin/deposits
+ */
+router.get('/deposits', requireAdmin, (req, res) => {
+  const { getStore } = require('../db');
+  const status = req.query.status || 'pending';
+  const store = getStore();
+  const rows = (store.deposits || [])
+    .filter(d => !status || status === 'all' || d.status === status)
+    .map(d => {
+      const u = store.users.find(x => x.id === d.user_id) || {};
+      return { ...d, username: u.username, telegram_id: u.telegram_id, first_name: u.first_name };
+    })
+    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+    .slice(0, 100);
+  res.json({ deposits: rows });
+});
+
+/**
+ * PATCH /api/admin/deposits/:id
+ * Confirm or reject deposit.
+ * - USDT (purpose withdraw_unlock): credit usdt + unlock withdraw
+ * - TON  (purpose verify): mark user is_verified
+ */
+router.patch('/deposits/:id', requireAdmin, (req, res) => {
+  const { getStore, saveStore } = require('../db');
+  const id = parseInt(req.params.id, 10);
+  const { status, adminNote } = req.body;
+  if (!['confirmed', 'rejected'].includes(status)) {
+    return res.status(400).json({ error: 'status must be confirmed or rejected' });
+  }
+
+  const store = getStore();
+  const dep = (store.deposits || []).find(d => d.id === id);
+  if (!dep) return res.status(404).json({ error: 'Deposit not found' });
+  if (dep.status !== 'pending') return res.status(400).json({ error: 'Already processed' });
+
+  dep.status = status;
+  dep.admin_note = adminNote || null;
+  dep.confirmed_at = new Date().toISOString();
+
+  if (status === 'confirmed') {
+    const u = store.users.find(x => x.id === dep.user_id);
+    if (u) {
+      const asset = (dep.asset || 'USDT').toUpperCase();
+      const purpose = dep.purpose || (asset === 'TON' ? 'verify' : 'withdraw_unlock');
+      if (asset === 'TON' || purpose === 'verify') {
+        u.is_verified = 1;
+      } else {
+        u.usdt_credited = Number(((u.usdt_credited || 0) + dep.amount).toFixed(4));
+        u.withdraw_unlocked = 1;
+      }
+      u.updated_at = new Date().toISOString();
+    }
+  }
+
+  saveStore();
+  res.json({ success: true, deposit: dep });
+});
+
+
+/**
+ * GET /api/admin/payment-channels
+ */
+router.get('/payment-channels', requireAdmin, (req, res) => {
+  const store = getStore();
+  const list = store.payment_channels || [];
+  res.json({ channels: list });
+});
+
+/**
+ * POST /api/admin/payment-channels
+ * Body: { name, asset, network, address, amount, purpose, note, isActive }
+ */
+router.post('/payment-channels', requireAdmin, (req, res) => {
+  const body = req.body || {};
+  const name = (body.name || '').trim();
+  const address = (body.address || '').trim();
+  if (!name || !address) {
+    return res.status(400).json({ error: 'name and address required' });
+  }
+  const store = getStore();
+  store.payment_channels = store.payment_channels || [];
+  const id = nextId('payment_channels');
+  const row = {
+    id,
+    name,
+    asset: (body.asset || 'USDT').toUpperCase(),
+    network: (body.network || 'BEP20').toUpperCase(),
+    address,
+    amount: body.amount != null ? parseFloat(body.amount) : null,
+    purpose: body.purpose || 'fee',
+    note: body.note || null,
+    telegram_channel: body.telegramChannel || body.telegram_channel || null,
+    is_active: body.isActive === false || body.isActive === 0 ? 0 : 1,
+    sort_order: body.sortOrder != null ? body.sortOrder : Date.now() % 100000,
+    created_at: new Date().toISOString()
+  };
+  store.payment_channels.push(row);
+  // Also sync primary settings if purpose fee/usdt
+  if (row.asset === 'USDT' && row.address) {
+    try {
+      const { setSetting } = require('../db');
+      if (typeof setSetting === 'function') {
+        setSetting('usdt_deposit_address', row.address);
+        if (row.network) setSetting('usdt_deposit_network', row.network);
+        if (row.amount != null) setSetting('min_usdt_deposit', String(row.amount));
+        if (row.amount != null) setSetting('withdraw_fee_amount', String(row.amount));
+      }
+    } catch (_) {}
+  }
+  if (row.asset === 'TON' && row.address) {
+    try {
+      const { setSetting } = require('../db');
+      if (typeof setSetting === 'function') setSetting('treasury_wallet', row.address);
+    } catch (_) {}
+  }
+  saveStore();
+  res.json({ success: true, channel: row });
+});
+
+/**
+ * PUT /api/admin/payment-channels/:id
+ */
+router.put('/payment-channels/:id', requireAdmin, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const store = getStore();
+  const row = (store.payment_channels || []).find(c => c.id === id);
+  if (!row) return res.status(404).json({ error: 'Channel not found' });
+  const body = req.body || {};
+  if (body.name != null) row.name = String(body.name).trim();
+  if (body.address != null) row.address = String(body.address).trim();
+  if (body.asset != null) row.asset = String(body.asset).toUpperCase();
+  if (body.network != null) row.network = String(body.network).toUpperCase();
+  if (body.amount != null) row.amount = parseFloat(body.amount);
+  if (body.purpose != null) row.purpose = body.purpose;
+  if (body.note != null) row.note = body.note;
+  if (body.isActive != null) row.is_active = body.isActive ? 1 : 0;
+  if (body.sortOrder != null) row.sort_order = body.sortOrder;
+  saveStore();
+  res.json({ success: true, channel: row });
+});
+
+/**
+ * DELETE /api/admin/payment-channels/:id
+ */
+router.delete('/payment-channels/:id', requireAdmin, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const store = getStore();
+  store.payment_channels = (store.payment_channels || []).filter(c => c.id !== id);
+  saveStore();
+  res.json({ success: true });
+});
+
+
+module.exports = router;
