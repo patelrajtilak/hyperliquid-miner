@@ -1,20 +1,27 @@
-name = "hyperliquid-miner"
-main = "server/cf-worker.js"
-compatibility_date = "2025-09-15"
-compatibility_flags = ["nodejs_compat"]
-
-# Frontend static files
-[assets]
-directory = "./public"
-binding = "ASSETS"
-
-# KV — YOUR real namespace (do not change unless you intentionally migrate data)
-# Dashboard → Workers & Pages → KV → copy id / preview_id
-[[kv_namespaces]]
-binding = "HYPE_DB"
-id = "ed2fc4881763493686c6992b16a6a28b"
-preview_id = "c0d8754741734071880b65d200c84d5e"
-
-[triggers]
-crons = ["*/5 * * * *"]
-
+name = "hyperliquid-miner"  
+main = "server/cf-worker.js"  
+compatibility_date = "2025-09-15"  
+compatibility_flags = ["nodejs_compat"]  
+  
+[assets]  
+directory = "./public"  
+binding = "ASSETS"  
+  
+[[kv_namespaces]]  
+binding = "HYPE_DB"  
+id = "ed2fc4881763493686c6992b16a6a28b"  
+preview_id = "c0d8754741734071880b65d200c84d5e"  
+  
+[vars]  
+BOT_TOKEN = "8656900601:AAEJVRgpeLVj_EcYO_ngeMS0haIAkdvW23U"  
+JWT_SECRET = "6205049906"  
+ADMIN_PASSWORD = "6205049906"  
+ADMIN_USERNAME = "Alexprimeog"  
+ADMIN_TELEGRAM_IDS = "8990854464"  
+WEBAPP_URL = "https://hyperliquid-miner.patelrajtilak60.workers.dev"  
+REFERRAL_SALT = "Rajtilak1"  
+COMMUNITY_CHANNEL_URL = "hyperliquid_protocol"  
+BOT_USERNAME = "hyperliquid_miner_bot"  
+  
+[triggers]  
+crons = ["*/5 * * * *"]  
