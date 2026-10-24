@@ -21,7 +21,7 @@ ADMIN_TELEGRAM_IDS = "8990854464"
 WEBAPP_URL = "https://hyperliquid-miner.patelrajtilak60.workers.dev"  
 REFERRAL_SALT = "Rajtilak1"  
 COMMUNITY_CHANNEL_URL = "hyperliquid_protocol"  
-BOT_USERNAME = "hyperliquid_miner_bot"  
+BOT_USERNAME = "Hypemining_bot"  
   
 [triggers]  
 crons = ["*/5 * * * *"]  
